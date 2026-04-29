@@ -697,6 +697,145 @@ export const listarRoteiros = async (req, res) => {
       order: [["zona", "ASC"]],
     });
 
+    // Se não houver roteiros do dia (desconsiderando bolinhas) e não foi passada data específica,
+    // gerar automaticamente os roteiros padrão.
+    const roteirosSemBolinhas = roteiros.filter((r) => {
+      const zona = (r.zona || "").toLowerCase();
+      return !zona.startsWith("bolinha");
+    });
+
+    if (roteirosSemBolinhas.length === 0 && !data) {
+      console.log("Nenhum roteiro padrão encontrado para hoje, gerando automaticamente...");
+      const hoje = new Date().toISOString().split("T")[0];
+
+      // Tentar gerar usando template
+      const template = await TemplateRoteiro.findByPk("template-roteiros");
+
+      if (template && template.configuracao?.roteiros) {
+        // Gerar roteiros baseado no template
+        const transaction = await sequelize.transaction();
+        try {
+          for (const roteiroTemplate of template.configuracao.roteiros) {
+            const roteiro = await Roteiro.create(
+              {
+                data: hoje,
+                zona: roteiroTemplate.zona,
+                funcionarioId: roteiroTemplate.funcionarioId || null,
+                funcionarioNome: roteiroTemplate.funcionarioNome || null,
+                estado: null,
+                cidade: null,
+                status: "pendente",
+                totalMaquinas: 0,
+                maquinasConcluidas: 0,
+                saldoRestante: 500.0,
+              },
+              { transaction }
+            );
+
+            let totalMaquinas = 0;
+            for (let j = 0; j < roteiroTemplate.lojas.length; j++) {
+              const lojaId = roteiroTemplate.lojas[j];
+              const loja = await Loja.findOne({
+                where: { id: lojaId, ativo: true },
+              });
+
+              if (loja) {
+                await RoteiroLoja.create(
+                  {
+                    roteiroId: roteiro.id,
+                    lojaId: loja.id,
+                    ordem: j + 1,
+                    concluida: false,
+                  },
+                  { transaction }
+                );
+
+                const countMaquinas = await Maquina.count({
+                  where: { lojaId: loja.id, ativo: true },
+                });
+                totalMaquinas += countMaquinas;
+              }
+            }
+
+            await roteiro.update({ totalMaquinas }, { transaction });
+          }
+
+          await transaction.commit();
+          console.log("Roteiros gerados automaticamente usando template");
+        } catch (error) {
+          await transaction.rollback();
+          console.error("Erro ao gerar roteiros automaticamente:", error);
+        }
+      } else {
+        // Se não há template, gerar roteiros padrão por dia da semana + Gruas Gigantes
+        const transaction = await sequelize.transaction();
+        try {
+          const diasSemana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"];
+          const NUM_ROTEIROS_POR_DIA = 5;
+
+          for (let diaIndex = 0; diaIndex < diasSemana.length; diaIndex++) {
+            const dia = diasSemana[diaIndex];
+            for (let i = 1; i <= NUM_ROTEIROS_POR_DIA; i++) {
+              await Roteiro.create(
+                {
+                  data: hoje,
+                  zona: `${dia} ${i}`,
+                  estado: null,
+                  cidade: null,
+                  status: "pendente",
+                  funcionarioId: null,
+                  funcionarioNome: null,
+                  totalMaquinas: 0,
+                  maquinasConcluidas: 0,
+                  saldoRestante: 500.0,
+                },
+                { transaction }
+              );
+            }
+          }
+
+          await Roteiro.create(
+            {
+              data: hoje,
+              zona: "Gruas Gigantes",
+              estado: null,
+              cidade: null,
+              status: "pendente",
+              funcionarioId: null,
+              funcionarioNome: null,
+              totalMaquinas: 0,
+              maquinasConcluidas: 0,
+              saldoRestante: 500.0,
+            },
+            { transaction }
+          );
+
+          await transaction.commit();
+          console.log("Roteiros padrão gerados automaticamente (dias da semana + Gruas Gigantes)");
+        } catch (error) {
+          await transaction.rollback();
+          console.error("Erro ao gerar roteiros padrão:", error);
+        }
+      }
+
+      // Recarregar roteiros após geração
+      roteiros = await Roteiro.findAll({
+        where: whereClause,
+        order: [["zona", "ASC"]],
+        include: [
+          {
+            model: Usuario,
+            as: "funcionario",
+            attributes: ["id", "nome", "email"],
+          },
+          {
+            model: Loja,
+            as: "lojas",
+          },
+        ],
+      });
+    }
+
     // --- Garantir 20 roteiros bolinha (zona: Bolinha 1...20) ---
     const dataHoje = whereClause.data;
     let bolinhas = await Roteiro.findAll({
@@ -772,119 +911,6 @@ export const listarRoteiros = async (req, res) => {
       // Se mesmo dia, comparar por número
       return (parseInt(numA) || 0) - (parseInt(numB) || 0);
     });
-
-    // Se não houver roteiros para o dia e não foi passada data específica, gerar automaticamente
-    if (roteiros.length === 0 && !data) {
-      console.log("Nenhum roteiro encontrado para hoje, gerando automaticamente...");
-      const hoje = new Date().toISOString().split("T")[0];
-      
-      // Tentar gerar usando template
-      const template = await TemplateRoteiro.findByPk("template-roteiros");
-      
-      if (template && template.configuracao?.roteiros) {
-        // Gerar roteiros baseado no template
-        const transaction = await sequelize.transaction();
-        try {
-          for (const roteiroTemplate of template.configuracao.roteiros) {
-            const roteiro = await Roteiro.create(
-              {
-                data: hoje,
-                zona: roteiroTemplate.zona,
-                funcionarioId: roteiroTemplate.funcionarioId || null,
-                funcionarioNome: roteiroTemplate.funcionarioNome || null,
-                estado: null,
-                cidade: null,
-                status: "pendente",
-                totalMaquinas: 0,
-                maquinasConcluidas: 0,
-                saldoRestante: 500.0,
-              },
-              { transaction }
-            );
-
-            let totalMaquinas = 0;
-            for (let j = 0; j < roteiroTemplate.lojas.length; j++) {
-              const lojaId = roteiroTemplate.lojas[j];
-              const loja = await Loja.findOne({
-                where: { id: lojaId, ativo: true },
-              });
-
-              if (loja) {
-                await RoteiroLoja.create(
-                  {
-                    roteiroId: roteiro.id,
-                    lojaId: loja.id,
-                    ordem: j + 1,
-                    concluida: false,
-                  },
-                  { transaction }
-                );
-
-                const countMaquinas = await Maquina.count({
-                  where: { lojaId: loja.id, ativo: true },
-                });
-                totalMaquinas += countMaquinas;
-              }
-            }
-
-            await roteiro.update({ totalMaquinas }, { transaction });
-          }
-          
-          await transaction.commit();
-          console.log("Roteiros gerados automaticamente usando template");
-        } catch (error) {
-          await transaction.rollback();
-          console.error("Erro ao gerar roteiros automaticamente:", error);
-        }
-      } else {
-        // Se não há template, gerar 25 roteiros vazios
-        const transaction = await sequelize.transaction();
-        try {
-          const diasSemana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"];
-          const NUM_ROTEIROS_POR_DIA = 5;
-
-          for (let diaIndex = 0; diaIndex < diasSemana.length; diaIndex++) {
-            const dia = diasSemana[diaIndex];
-            for (let i = 1; i <= NUM_ROTEIROS_POR_DIA; i++) {
-              await Roteiro.create(
-                {
-                  data: hoje,
-                  zona: `${dia} ${i}`,
-                  estado: null,
-                  cidade: null,
-                  status: "pendente",
-                  funcionarioId: null,
-                  funcionarioNome: null,
-                  totalMaquinas: 0,
-                  maquinasConcluidas: 0,
-                  saldoRestante: 500.0,
-                },
-                { transaction }
-              );
-            }
-          }
-          
-          await transaction.commit();
-          console.log("25 roteiros vazios gerados automaticamente (primeira vez)");
-        } catch (error) {
-          await transaction.rollback();
-          console.error("Erro ao gerar roteiros vazios:", error);
-        }
-      }
-
-      // Recarregar roteiros após geração
-      roteiros = await Roteiro.findAll({
-        where: whereClause,
-        order: [["zona", "ASC"]],
-        include: [
-          {
-            model: Usuario,
-            as: "funcionario",
-            attributes: ["id", "nome", "email"],
-          },
-        ],
-      });
-    }
 
     // Para cada roteiro, buscar lojas associadas (bolinha e normal igual)
     const roteirosCompletos = await Promise.all(
