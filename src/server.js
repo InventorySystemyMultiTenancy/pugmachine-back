@@ -34,7 +34,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:5174",
-  "https://pugmachine-front.vercel.app",
+  "https://pugmachine.vercel.app",
   "https://pugmachine.selfmachine.com.br",
   "https://agarramaisop.selfmachine.com.br",
   "https://clubekids.selfmachine.com.br",
