@@ -25,6 +25,11 @@ app.use(
 );
 
 // Configurar CORS para aceitar localhost e produção
+const envAllowedOrigins = (process.env.FRONTEND_URLS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
@@ -34,26 +39,39 @@ const allowedOrigins = [
   "https://agarramaisop.selfmachine.com.br",
   "https://clubekids.selfmachine.com.br",
   process.env.FRONTEND_URL,
+  ...envAllowedOrigins,
 ].filter(Boolean); // Remove undefined se FRONTEND_URL não estiver definida
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Permitir requisições sem origin (como mobile apps, Postman, curl)
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Permitir requisições sem origin (como mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
 
-      // Se estiver na lista de origens permitidas ou for "*"
-      if (allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
+    // Normaliza origin para evitar problema com barra final
+    const normalizedOrigin = origin.replace(/\/$/, "");
+
+    if (
+      allowedOrigins.includes(normalizedOrigin) ||
+      allowedOrigins.includes("*")
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Not allowed by CORS: ${normalizedOrigin}`));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
