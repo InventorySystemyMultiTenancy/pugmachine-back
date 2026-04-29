@@ -429,6 +429,8 @@ import {
   precisaAutocorrecaoLock,
 } from "../utils/roteiroLockRules.js";
 
+const DATA_FIXA_ROTEIROS = "2026-02-24";
+
 const resumoAlertaFinalizacaoVazio = () => ({
   possuiAlertaFinalizacao: false,
   foiFinalizadoSemConcluirTodasLojas: false,
@@ -613,7 +615,7 @@ export const desfazerFinalizacaoRoteiro = async (req, res) => {
 // Função auxiliar para salvar template automaticamente
 const salvarTemplateAutomaticamente = async () => {
   try {
-    const hoje = new Date().toISOString().split("T")[0];
+    const hoje = DATA_FIXA_ROTEIROS;
     const roteiros = await Roteiro.findAll({
       where: { data: hoje },
       include: [
@@ -669,8 +671,8 @@ export const listarRoteiros = async (req, res) => {
     if (data) {
       whereClause.data = data;
     } else {
-      // Se não passar data, filtrar por data atual
-      const hoje = new Date().toISOString().split("T")[0];
+      // Se não passar data, usar data fixa de roteiros
+      const hoje = DATA_FIXA_ROTEIROS;
       whereClause.data = hoje;
     }
 
@@ -706,7 +708,7 @@ export const listarRoteiros = async (req, res) => {
 
     if (roteirosSemBolinhas.length === 0 && !data) {
       console.log("Nenhum roteiro padrão encontrado para hoje, gerando automaticamente...");
-      const hoje = new Date().toISOString().split("T")[0];
+      const hoje = DATA_FIXA_ROTEIROS;
 
       // Tentar gerar usando template
       const template = await TemplateRoteiro.findByPk("template-roteiros");
@@ -991,8 +993,8 @@ export const gerarRoteiros = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { data, usarTemplate = false } = req.body;
-    const dataRoteiro = data || new Date().toISOString().split("T")[0];
+    const { usarTemplate = false } = req.body;
+    const dataRoteiro = DATA_FIXA_ROTEIROS;
 
     // Contar roteiros existentes para numerar os novos corretamente
     const roteirosExistentes = await Roteiro.count({
@@ -1264,7 +1266,7 @@ export const criarRoteiroCoringa = async (req, res) => {
     }
 
     const roteiro = await Roteiro.create({
-      data: new Date().toISOString().split("T")[0],
+      data: DATA_FIXA_ROTEIROS,
       zona: "Roteiro Coringa",
       estado: null,
       cidade: null,
@@ -2234,8 +2236,8 @@ export const deletarTodosRoteiros = async (req, res) => {
     if (data) {
       whereClause.data = data;
     } else {
-      // Senão, deletar apenas roteiros do dia atual
-      const hoje = new Date().toISOString().split("T")[0];
+      // Senão, deletar roteiros da data fixa
+      const hoje = DATA_FIXA_ROTEIROS;
       whereClause.data = hoje;
     }
     
@@ -2289,8 +2291,8 @@ export const deletarTodosRoteiros = async (req, res) => {
 // Salva a configuração atual dos roteiros como template
 export const salvarTemplate = async (req, res) => {
   try {
-    // Buscar roteiros do dia atual
-    const hoje = new Date().toISOString().split("T")[0];
+    // Buscar roteiros da data fixa
+    const hoje = DATA_FIXA_ROTEIROS;
     const roteiros = await Roteiro.findAll({
       where: { data: hoje },
       include: [
