@@ -122,6 +122,12 @@ router.put("/:id", clearHttpCacheOnSuccess(), atualizarRoteiro);
 // DELETE /api/roteiros/:id - Deletar um roteiro
 router.delete("/:id", clearHttpCacheOnSuccess(), deletarRoteiro);
 
+// DELETE /api/roteiros/:id/excluir - Deletar roteiro em qualquer status (forçado)
+router.delete("/:id/excluir", clearHttpCacheOnSuccess(), (req, res) => {
+  req.query.force = "true";
+  return deletarRoteiro(req, res);
+});
+
 // POST /api/roteiros/:id/iniciar - Inicia um roteiro
 router.post("/:id/iniciar", clearHttpCacheOnSuccess(), iniciarRoteiro);
 

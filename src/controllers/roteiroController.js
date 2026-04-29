@@ -1133,10 +1133,19 @@ export const gerarRoteiros = async (req, res) => {
       }
     }
 
-    // Gerar roteiros do zero (comportamento padrão)
-    console.log("Gerando roteiros do zero");
-    
-    // 1. Buscar todas as lojas ativas
+    // Gerar roteiros fixos (comportamento padrão sem template)
+    console.log("Gerando roteiros fixos padrão (6 por dia)");
+
+    const zonasFixas = [
+      "Segunda 1",
+      "Terça 1",
+      "Quarta 1",
+      "Quinta 1",
+      "Sexta 1",
+      "Gruas Gigantes",
+    ];
+
+    // 1. Buscar lojas ativas para distribuição básica inicial
     const lojas = await Loja.findAll({
       where: { ativo: true },
       order: [
@@ -1146,99 +1155,91 @@ export const gerarRoteiros = async (req, res) => {
       ],
     });
 
-    if (lojas.length === 0) {
-      await transaction.rollback();
-      return res
-        .status(400)
-        .json({ error: "Não há lojas ativas para gerar roteiros" });
-    }
-
-    // 2. Gerar 5 roteiros para cada dia da semana (Segunda a Sexta) = 25 roteiros
-    const diasSemana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"];
-    const NUM_ROTEIROS_POR_DIA = 5;
-    const TOTAL_ROTEIROS = diasSemana.length * NUM_ROTEIROS_POR_DIA; // 25 roteiros
-    const roteirosIds = [];
-    const distribuicao = Array.from({ length: TOTAL_ROTEIROS }, () => []);
-
-    // Distribuir lojas em round-robin (rotação) entre os 25 roteiros
-    lojas.forEach((loja, index) => {
-      const roteiroIndex = index % TOTAL_ROTEIROS;
-      distribuicao[roteiroIndex].push(loja);
+    // 2. Verificar quais roteiros fixos já existem no dia
+    const existentes = await Roteiro.findAll({
+      where: {
+        data: dataRoteiro,
+        zona: { [Op.in]: zonasFixas },
+      },
+      attributes: ["id", "zona"],
+      transaction,
     });
 
-    // 3. Criar os 25 roteiros
-    let roteiroGlobalIndex = 0;
-    for (let diaIndex = 0; diaIndex < diasSemana.length; diaIndex++) {
-      const dia = diasSemana[diaIndex];
-      
-      for (let i = 1; i <= NUM_ROTEIROS_POR_DIA; i++) {
-        const lojasDoRoteiro = distribuicao[roteiroGlobalIndex];
-        const nomeRoteiro = `${dia} ${i}`;
+    const zonasExistentes = new Set(existentes.map((r) => r.zona));
+    const zonasParaCriar = zonasFixas.filter((zona) => !zonasExistentes.has(zona));
 
-        // Se não há lojas para este roteiro, criar mesmo assim vazio
-        const primeiraLoja = lojasDoRoteiro[0] || null;
+    if (zonasParaCriar.length === 0) {
+      await transaction.commit();
+      return res.json({
+        success: true,
+        message: `Os 6 roteiros fixos já existem para ${dataRoteiro}`,
+        criados: 0,
+        totalFixos: zonasFixas.length,
+      });
+    }
 
-        // Criar roteiro com nome "Segunda 1", "Segunda 2", etc.
-        const roteiro = await Roteiro.create(
+    const roteirosIds = [];
+
+    // 3. Criar apenas os roteiros fixos que faltam
+    for (const zona of zonasParaCriar) {
+      const roteiro = await Roteiro.create(
+        {
+          data: dataRoteiro,
+          zona,
+          estado: null,
+          cidade: null,
+          status: "pendente",
+          funcionarioId: null,
+          funcionarioNome: null,
+          totalMaquinas: 0,
+          maquinasConcluidas: 0,
+          saldoRestante: 500.0,
+        },
+        { transaction }
+      );
+
+      roteirosIds.push(roteiro.id);
+
+      // Distribuição inicial simples das lojas quando houver lojas ativas
+      let totalMaquinas = 0;
+      const indiceZona = zonasFixas.indexOf(zona);
+      const lojasDoRoteiro = lojas.filter((_, idx) => idx % zonasFixas.length === indiceZona);
+
+      for (let j = 0; j < lojasDoRoteiro.length; j++) {
+        const loja = lojasDoRoteiro[j];
+
+        await RoteiroLoja.create(
           {
-            data: dataRoteiro,
-            zona: nomeRoteiro,
-            estado: primeiraLoja?.estado || null,
-            cidade: primeiraLoja?.cidade || null,
-            status: "pendente",
-            funcionarioId: null, // Admin decide quem atribui depois
-            funcionarioNome: null,
-            totalMaquinas: 0,
-            maquinasConcluidas: 0,
-            saldoRestante: 500.0,
+            roteiroId: roteiro.id,
+            lojaId: loja.id,
+            ordem: j + 1,
+            concluida: false,
           },
           { transaction }
         );
 
-        let totalMaquinas = 0;
+        const countMaquinas = await Maquina.count({
+          where: {
+            lojaId: loja.id,
+            ativo: true,
+          },
+        });
 
-        // Associar lojas ao roteiro
-        for (let j = 0; j < lojasDoRoteiro.length; j++) {
-          const loja = lojasDoRoteiro[j];
-
-          await RoteiroLoja.create(
-            {
-              roteiroId: roteiro.id,
-              lojaId: loja.id,
-              ordem: j + 1,
-              concluida: false,
-            },
-            { transaction }
-          );
-
-          // Contar máquinas ativas da loja
-          const countMaquinas = await Maquina.count({
-            where: {
-              lojaId: loja.id,
-              ativo: true,
-            },
-          });
-
-          totalMaquinas += countMaquinas;
-        }
-
-        // Atualizar total de máquinas no roteiro
-        await roteiro.update({ totalMaquinas }, { transaction });
-        roteirosIds.push(roteiro.id);
-        roteiroGlobalIndex++;
+        totalMaquinas += countMaquinas;
       }
+
+      await roteiro.update({ totalMaquinas }, { transaction });
     }
 
     await transaction.commit();
 
-    res.json({
-      message: `6 novos roteiros gerados com sucesso para ${dataRoteiro}`,
+    return res.json({
+      success: true,
+      message: `${zonasParaCriar.length} roteiro(s) fixo(s) criado(s) com sucesso para ${dataRoteiro}`,
+      criados: zonasParaCriar.length,
       roteiros: roteirosIds,
-      totalRoteiros: numeroInicial + NUM_ROTEIROS,
-      distribuicao: distribuicao.map((lojas, i) => ({
-        roteiro: `Roteiro #${numeroInicial + i + 1}`,
-        lojas: lojas.length,
-      })),
+      zonasCriadas: zonasParaCriar,
+      totalFixos: zonasFixas.length,
     });
   } catch (error) {
     await transaction.rollback();
